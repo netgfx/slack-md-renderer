@@ -1,0 +1,24 @@
+{
+  "name": "slack-md-renderer",
+  "version": "1.0.0",
+  "description": "Slack app that renders Markdown as a native Slack markdown block or sanitized HTML, but only after a deterministic security audit passes.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "lint": "eslint .",
+    "test": "node --test"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@slack/bolt": "^4.7.3",
+    "markdown-it": "^14.2.0",
+    "sanitize-html": "^2.17.5"
+  },
+  "devDependencies": {
+    "eslint": "^9.0.0"
+  }
+}

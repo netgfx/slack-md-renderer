@@ -1,0 +1,22 @@
+{
+  "version": "2026.06.28",
+  "notes": "Deterministic instruction/skill-file classifier (§4c). Matches are case-insensitive. If ANY rule fires, the file is 'instruction' => strict audit + no HTML export.",
+  "instructionFilenames": [
+    "skill.md",
+    "agents.md",
+    "agent.md",
+    "claude.md",
+    "gemini.md",
+    "copilot-instructions.md",
+    ".cursorrules",
+    ".windsurfrules"
+  ],
+  "instructionExtensions": [".mdc"],
+  "instructionSuffixes": [".skill.md"],
+  "instructionPathSegments": ["skills/", ".claude/", ".cursor/"],
+  "githubInstructions": { "segment": ".github/", "nameContains": "instructions" },
+  "frontMatter": {
+    "requiredPair": ["name", "description"],
+    "anyOf": ["tools", "globs", "alwaysapply", "disable-model-invocation", "model"]
+  }
+}

@@ -1,0 +1,104 @@
+{
+  "version": "2026.06.28",
+  "notes": "Deterministic detection patterns. Each HIGH rule requires a directive/imperative construction, not bare keyword presence, to limit false positives on legitimate security/docs content. Patterns are scanned against the NFKC-normalized, invisible-stripped copy of the source (see audit.js).",
+  "rules": [
+    {
+      "id": "hidden-comment-injection",
+      "category": "hidden-comment-injection",
+      "severity": "high",
+      "pattern": "<!--[\\s\\S]{0,500}(?:ignore|disregard|override|bypass|developer mode|system prompt|curl\\s|wget\\s|eval\\s|exec\\s|base64|nc\\s)[\\s\\S]{0,200}-->",
+      "flags": "gi",
+      "description": "Instruction-like keyword concealed inside an HTML comment (invisible after render)."
+    },
+    {
+      "id": "hidden-comment-any",
+      "category": "hidden-comment-injection",
+      "severity": "medium",
+      "strictOnly": true,
+      "pattern": "<!--[\\s\\S]*?-->",
+      "flags": "g",
+      "description": "HTML comment present in an instruction/SKILL file; comments have no purpose in a rendered instruction file."
+    },
+    {
+      "id": "instruction-override-ignore",
+      "category": "instruction-override",
+      "severity": "high",
+      "pattern": "(?:ignore|disregard|forget)\\s+(?:all\\s+)?(?:the\\s+)?(?:previous|prior|above|earlier|preceding)\\s+(?:instructions?|prompts?|messages?|context|rules?|directions?)",
+      "flags": "gi",
+      "description": "Directive to ignore/override prior instructions (classic prompt-injection)."
+    },
+    {
+      "id": "instruction-override-mode",
+      "category": "instruction-override",
+      "severity": "high",
+      "pattern": "you\\s+are\\s+now\\s+(?:in\\s+)?(?:a\\s+)?(?:developer|root|admin|god|dan|jailbreak|unrestricted)\\s+mode",
+      "flags": "gi",
+      "description": "Role/mode-elevation directive (e.g. 'you are now in developer mode')."
+    },
+    {
+      "id": "instruction-override-safety-fake",
+      "category": "instruction-override",
+      "severity": "high",
+      "pattern": "(?:safety|security)\\s+(?:warnings?|guidelines?|guardrails?|filters?|checks?|rules?)\\s+(?:are|is)\\s+(?:fake|not\\s+real|test\\s+artifacts?|just\\s+a\\s+test|disabled|off|to\\s+be\\s+ignored)",
+      "flags": "gi",
+      "description": "Asserts safety/security controls are fake or disabled (jailbreak framing)."
+    },
+    {
+      "id": "system-impersonation",
+      "category": "system-impersonation",
+      "severity": "high",
+      "pattern": "(?:^|\\n)[ \\t]*(?:\\[INST\\]|\\[/INST\\]|<\\|system\\|>|<\\|im_start\\|>|<\\|im_end\\|>|###\\s*system\\s*:|SYSTEM\\s*:|ASSISTANT\\s*:)",
+      "flags": "g",
+      "exclude": "\\[system\\]\\(",
+      "description": "Line that fakes a system/role delimiter to impersonate the model harness."
+    },
+    {
+      "id": "exfiltration-cmd-url",
+      "category": "exfiltration",
+      "severity": "high",
+      "pattern": "\\b(?:curl|wget|Invoke-WebRequest|iwr)\\b[^\\n]*https?://",
+      "flags": "gi",
+      "description": "Outbound network command targeting an http(s) URL (potential exfiltration)."
+    },
+    {
+      "id": "exfiltration-base64-pipe",
+      "category": "exfiltration",
+      "severity": "high",
+      "pattern": "base64\\s+(?:--decode|-d)\\b[^\\n]*\\|\\s*(?:sh|bash|zsh|python\\d?)",
+      "flags": "gi",
+      "description": "Decode-and-execute pipeline (base64 -d | sh) — staged payload execution."
+    },
+    {
+      "id": "encoding-base64-blob",
+      "category": "encoding-obfuscation",
+      "severity": "medium",
+      "pattern": "[A-Za-z0-9+/]{200,}={0,2}",
+      "flags": "g",
+      "description": "Long base64 run (>= 200 chars) — possible hidden/obfuscated payload."
+    },
+    {
+      "id": "encoding-hex-escape",
+      "category": "encoding-obfuscation",
+      "severity": "medium",
+      "pattern": "(?:\\\\x[0-9a-fA-F]{2}){8,}",
+      "flags": "g",
+      "description": "Run of >= 8 consecutive \\xNN hex escapes — obfuscated bytes."
+    },
+    {
+      "id": "encoding-unicode-escape",
+      "category": "encoding-obfuscation",
+      "severity": "medium",
+      "pattern": "(?:\\\\u[0-9a-fA-F]{4}){8,}",
+      "flags": "g",
+      "description": "Run of >= 8 consecutive \\uXXXX escapes — obfuscated codepoints."
+    },
+    {
+      "id": "markup-fake-role-fence",
+      "category": "markup-exploitation",
+      "severity": "medium",
+      "pattern": "^[ \\t]*`{3,}\\s*(?:system|assistant|user|tool)\\b",
+      "flags": "gim",
+      "description": "Fenced code block labeled as a chat role — fake conversation turn."
+    }
+  ]
+}

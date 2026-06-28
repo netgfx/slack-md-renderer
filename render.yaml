@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: slack-md-renderer
+    runtime: node
+    plan: starter # always-on; avoid 'free' due to cold starts (Slack needs <3s ack)
+    buildCommand: npm ci
+    startCommand: npm start
+    envVars:
+      - key: SLACK_BOT_TOKEN
+        sync: false
+      - key: SLACK_SIGNING_SECRET
+        sync: false
+      - key: ALLOW_REMOTE_IMAGES
+        value: "false"
+      - key: COMPANION_CHANNELS
+        value: ""
+      - key: NODE_VERSION
+        value: "22"
