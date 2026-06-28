@@ -45,10 +45,13 @@ const BOT_TOKEN = requireEnv('SLACK_BOT_TOKEN');
 const SIGNING_SECRET = requireEnv('SLACK_SIGNING_SECRET');
 
 // file_shared handling: mode + the channels it's active in. Empty list => off.
+// FILE_RENDER_CHANNELS='*' => every channel the bot is in (file_shared only fires
+// for channels the bot is a member of, so this is "all invited channels").
 const FILE_SHARED_MODE = (process.env.FILE_SHARED_MODE || 'off').toLowerCase(); // off | auto | button
 const FILE_RENDER_CHANNELS = new Set(
   (process.env.FILE_RENDER_CHANNELS || '').split(',').map((s) => s.trim()).filter(Boolean)
 );
+const RENDER_ALL_CHANNELS = FILE_RENDER_CHANNELS.has('*');
 
 const app = new App({ token: BOT_TOKEN, signingSecret: SIGNING_SECRET });
 
@@ -76,7 +79,7 @@ app.shortcut(MESSAGE_SHORTCUT_ID, async ({ shortcut, ack, client, logger }) => {
       return;
     }
     const { text, filename } = await fetchFileText(client, { fileId: file.id, botToken: BOT_TOKEN });
-    const { blocks, text: fallback } = renderForMessage({ rawText: text, filename });
+    const { blocks, text: fallback } = renderForMessage({ rawText: text, filename, fileId: file.id });
     await postViaResponseUrl(responseUrl, {
       response_type: 'ephemeral',
       replace_original: true,
@@ -127,10 +130,11 @@ app.action(DOWNLOAD_ACTION_ID, async ({ ack, body, action, client, logger }) => 
   await ack();
   try {
     await handleDownload({
-      token: action.value,
+      value: action.value,
       userId: body.user.id,
       responseUrl: body.response_url,
-      client
+      client,
+      botToken: BOT_TOKEN
     });
   } catch (err) {
     logger.error('HTML download failed:', err);
@@ -147,7 +151,7 @@ app.action(COMPANION_ACTION_ID, async ({ ack, body, action, client, logger }) =>
   try {
     await postViaResponseUrl(responseUrl, { response_type: 'ephemeral', text: RENDERING_TEXT });
     const { text, filename } = await fetchFileText(client, { fileId: action.value, botToken: BOT_TOKEN });
-    const { blocks, text: fallback } = renderForMessage({ rawText: text, filename });
+    const { blocks, text: fallback } = renderForMessage({ rawText: text, filename, fileId: action.value });
     await postViaResponseUrl(responseUrl, { response_type: 'ephemeral', replace_original: true, blocks, text: fallback });
   } catch (err) {
     logger.error('Companion render failed:', err);
@@ -160,7 +164,7 @@ app.event('file_shared', async ({ event, client, logger }) => {
   try {
     if (FILE_SHARED_MODE === 'off') return;
     const channel = event.channel_id;
-    if (!FILE_RENDER_CHANNELS.has(channel)) return; // off unless allowlisted
+    if (!RENDER_ALL_CHANNELS && !FILE_RENDER_CHANNELS.has(channel)) return; // off unless allowed
 
     const info = await client.files.info({ file: event.file_id });
     const file = info.file;
@@ -169,7 +173,7 @@ app.event('file_shared', async ({ event, client, logger }) => {
     if (FILE_SHARED_MODE === 'auto') {
       const text = await downloadFileText(file, BOT_TOKEN);
       const threadTs = shareThreadTs(file, channel);
-      await handleAutoRender({ rawText: text, filename: file.name, client, channel, threadTs });
+      await handleAutoRender({ rawText: text, filename: file.name, client, channel, threadTs, fileId: event.file_id });
     } else if (FILE_SHARED_MODE === 'button') {
       await postCompanionButton(client, {
         channel,
@@ -192,5 +196,5 @@ app.error(async (error) => {
   const port = process.env.PORT || 3000;
   await app.start(port);
   console.log(`⚡️ slack-md-renderer running on :${port} (POST /slack/events)`);
-  console.log(`file_shared mode: ${FILE_SHARED_MODE}; channels: ${FILE_RENDER_CHANNELS.size}`);
+  console.log(`file_shared mode: ${FILE_SHARED_MODE}; channels: ${RENDER_ALL_CHANNELS ? 'ALL' : FILE_RENDER_CHANNELS.size}`);
 })();

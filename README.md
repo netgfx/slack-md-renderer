@@ -120,7 +120,7 @@ and use the tunnel URL as the Request URL.
 |---|---|---|
 | `ALLOW_REMOTE_IMAGES` | `false` | `false` strips remote `<img src>` in HTML export (anti-exfil) |
 | `FILE_SHARED_MODE` | `off` | `auto` = auto-render a threaded reply on share; `button` = post a Render button |
-| `FILE_RENDER_CHANNELS` | empty | channel IDs where `file_shared` handling is active (empty = off) |
+| `FILE_RENDER_CHANNELS` | empty | channel **IDs** (e.g. `C0123ABCD`, not names) where `file_shared` handling is active; empty = off; `*` = all channels the bot is in |
 
 Hard limits: input is rejected over **50,000 chars**; shared files over **256 KB** are
 refused. Audit rules live in `config/ruleset.json` and are unit-tested against attack
