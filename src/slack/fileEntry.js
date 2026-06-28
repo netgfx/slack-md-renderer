@@ -8,7 +8,7 @@
 
 import { classifyMarkdown } from '../classify.js';
 import { auditMarkdown } from '../security/audit.js';
-import { toSlackBlocks, toMrkdwnSections, toHtml } from '../render.js';
+import { toMrkdwnSections, toHtml } from '../render.js';
 import { buildWarningView } from './warningView.js';
 import { buildResultView, buildConfirmationView } from './previewView.js';
 import { dmHtmlFile } from '../deliver.js';
@@ -40,9 +40,10 @@ export async function handlePreview({ rawText, filename = '', forceInstruction =
     allowHtmlExport: classification.allowHtmlExport
   });
 
-  // Try the richer `markdown` block first; fall back to mrkdwn on invalid_blocks.
-  const markdownView = buildResultView({
-    previewBlocks: toSlackBlocks(rawText),
+  // Modals only support `mrkdwn` text objects (not the `markdown` block, which
+  // errors with invalid_arguments), so render converted Slack mrkdwn directly.
+  const view = buildResultView({
+    previewBlocks: toMrkdwnSections(rawText),
     allowHtmlExport: classification.allowHtmlExport,
     token,
     filename,
@@ -50,21 +51,10 @@ export async function handlePreview({ rawText, filename = '', forceInstruction =
   });
 
   try {
-    await client.views.update({ view_id: viewId, view: markdownView });
+    await client.views.update({ view_id: viewId, view });
   } catch (err) {
-    if (isInvalidBlocks(err)) {
-      const fallbackView = buildResultView({
-        previewBlocks: toMrkdwnSections(rawText),
-        allowHtmlExport: classification.allowHtmlExport,
-        token,
-        filename,
-        audit
-      });
-      await client.views.update({ view_id: viewId, view: fallbackView });
-    } else {
-      if (logger) logger.error('views.update failed:', err);
-      throw err;
-    }
+    if (logger) logger.error('views.update failed:', err);
+    throw err;
   }
 
   return { classify: classification, audit };
@@ -115,12 +105,6 @@ export function htmlNameFor(filename) {
   const base = String(filename || '').replace(/^.*[\\/]/, '').trim();
   if (!base) return 'rendered.html';
   return base.replace(/\.(md|markdown|mdc)$/i, '') + '.html';
-}
-
-function isInvalidBlocks(err) {
-  const data = err?.data;
-  const msg = String(err?.message || '');
-  return data?.error === 'invalid_blocks' || /invalid_blocks/.test(msg);
 }
 
 function firstPermalink(upload) {

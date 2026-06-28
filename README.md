@@ -44,14 +44,15 @@ entry point ─┐
   automatic `section`+`mrkdwn` fallback. HTML export is sanitized with `sanitize-html`
   (allowlist; `https`/`mailto` schemes only; remote image `src` stripped by default).
 
-### Modal Markdown fidelity (verify once)
+### Modal Markdown fidelity (confirmed)
 
-The `markdown` block is **not documented as supported inside modal views**, so the
-preview attempts it and falls back to `section`+`mrkdwn` on an `invalid_blocks` error
-(losing tables / sized headers). Confirm in Block Kit Builder (surface = *Modal*)
-which path your workspace accepts and note it here:
-
-> Modal `markdown` block support in this workspace: **TODO — verify in Block Kit Builder.**
+Slack's `markdown` block is **not supported inside modal views** — sending one makes
+`views.open`/`views.update` fail with `invalid_arguments`. Modals only accept `mrkdwn`
+text objects in `section` blocks. So the modal preview converts CommonMark to Slack
+`mrkdwn` (`mrkdwnFromCommonMark` in [src/render.js](src/render.js)): headings render as
+bold, `**bold**`→`*bold*`, links as `<url|text>`, bullets as `•`, and fenced/inline code
+is preserved verbatim. **Tables and sized headers don't render in `mrkdwn`** — use the
+**Download as HTML** button for full-fidelity output (documents only).
 
 ## Project layout
 

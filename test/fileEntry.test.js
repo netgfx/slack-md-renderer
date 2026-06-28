@@ -66,7 +66,14 @@ test('document-class safe input shows the Download as HTML button', async () => 
   const view = lastView(client);
   assert.equal(view.title.text, 'Rendered Markdown');
   assert.ok(hasDownloadButton(view), 'document should offer HTML download');
-  assert.ok(previewBlockTypes(view).has('markdown'), 'preview should use markdown blocks');
+});
+
+test('modal preview uses mrkdwn section blocks, never the markdown block', async () => {
+  const client = mockClient();
+  await handlePreview({ rawText: '# Doc\n\nHello world.', filename: 'README.md', client, viewId: 'V1' });
+  const types = previewBlockTypes(lastView(client));
+  assert.ok(types.has('section'), 'preview should use section blocks');
+  assert.ok(!types.has('markdown'), 'markdown block is unsupported in modals');
 });
 
 test('instruction-class safe input hides the Download button', async () => {
@@ -75,15 +82,6 @@ test('instruction-class safe input hides the Download button', async () => {
   const { classify } = await handlePreview({ rawText: raw, filename: 'notes.md', client, viewId: 'V1' });
   assert.equal(classify.kind, 'instruction');
   assert.ok(!hasDownloadButton(lastView(client)), 'instruction files must not offer HTML export');
-});
-
-test('falls back to mrkdwn sections on invalid_blocks', async () => {
-  const client = mockClient({ failFirstUpdateWith: 'invalid_blocks' });
-  await handlePreview({ rawText: '# Doc\n\nHello.', filename: 'README.md', client, viewId: 'V1' });
-  assert.equal(client.calls.update.length, 1, 'only the fallback update should succeed');
-  const types = previewBlockTypes(lastView(client));
-  assert.ok(types.has('section'), 'fallback should use section blocks');
-  assert.ok(!types.has('markdown'), 'fallback must not use markdown blocks');
 });
 
 // ---------------------------------------------------------------------------

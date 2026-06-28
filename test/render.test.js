@@ -5,6 +5,7 @@ import {
   toHtml,
   toSlackBlocks,
   toMrkdwnSections,
+  mrkdwnFromCommonMark,
   splitOnBlockBoundaries,
   SLACK_CHUNK,
   MRKDWN_CHUNK
@@ -134,4 +135,46 @@ test('toMrkdwnSections never emits empty text for empty input', () => {
   const blocks = toMrkdwnSections('');
   assert.equal(blocks.length, 1);
   assert.ok(blocks[0].text.text.length >= 1);
+});
+
+// ---------------------------------------------------------------------------
+// CommonMark -> Slack mrkdwn conversion (modal preview)
+// ---------------------------------------------------------------------------
+
+test('headings become bold lines (mrkdwn has no headers)', () => {
+  assert.equal(mrkdwnFromCommonMark('# Title'), '*Title*');
+  assert.equal(mrkdwnFromCommonMark('### Sub heading'), '*Sub heading*');
+});
+
+test('bold and strikethrough convert to Slack syntax', () => {
+  assert.equal(mrkdwnFromCommonMark('a **bold** b'), 'a *bold* b');
+  assert.equal(mrkdwnFromCommonMark('a __bold__ b'), 'a *bold* b');
+  assert.equal(mrkdwnFromCommonMark('a ~~gone~~ b'), 'a ~gone~ b');
+});
+
+test('links convert to <url|text> and images to alt text', () => {
+  assert.equal(mrkdwnFromCommonMark('[site](https://x.test)'), '<https://x.test|site>');
+  assert.equal(mrkdwnFromCommonMark('![pixel](https://x.test/p.png)'), 'pixel');
+});
+
+test('bullets convert to • markers', () => {
+  assert.equal(mrkdwnFromCommonMark('- one\n- two'), '• one\n• two');
+});
+
+test('code spans and fences are never rewritten', () => {
+  // ** inside inline code must survive verbatim
+  assert.equal(mrkdwnFromCommonMark('use `a**b**c` ok'), 'use `a**b**c` ok');
+  // a fenced block keeps its body; heading-like lines inside are untouched
+  const fenced = '```js\n# not a heading\nconst x = 1;\n```';
+  const out = mrkdwnFromCommonMark(fenced);
+  assert.ok(out.includes('# not a heading'), 'fenced content must be preserved');
+  assert.ok(out.includes('const x = 1;'));
+});
+
+test('converted output flows through toMrkdwnSections', () => {
+  const blocks = toMrkdwnSections('# Title\n\n**bold** and [l](https://x.test)');
+  assert.equal(blocks[0].type, 'section');
+  assert.ok(blocks[0].text.text.includes('*Title*'));
+  assert.ok(blocks[0].text.text.includes('*bold*'));
+  assert.ok(blocks[0].text.text.includes('<https://x.test|l>'));
 });

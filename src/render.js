@@ -53,15 +53,72 @@ export function toSlackBlocks(raw) {
 /** Slack `section` mrkdwn text cap. */
 export const MRKDWN_CHUNK = 2900;
 
+// Private-use sentinel for protecting code while transforming. Built without a
+// literal control char in source.
+const MARK = String.fromCodePoint(0xe000);
+
 /**
- * Fallback preview used only if a modal rejects `markdown` blocks (`invalid_blocks`).
- * Produces `section`+`mrkdwn` blocks (loses tables / sized headers). §4b.5 / §5.2.
+ * Convert CommonMark to Slack's `mrkdwn` dialect for modal previews. Slack modals
+ * do NOT support the `markdown` block — only `mrkdwn` text objects — and `mrkdwn`
+ * differs from CommonMark (`*bold*`, no `#` headers, no tables). Fenced and inline
+ * code are protected so their contents are never rewritten. Tables are left as-is
+ * (Slack cannot render them; the HTML export gives full fidelity).
+ * @param {string} src
+ * @returns {string}
+ */
+export function mrkdwnFromCommonMark(src) {
+  const text = typeof src === 'string' ? src : String(src ?? '');
+  const codeStore = [];
+
+  // 1. Protect fenced code blocks (strip the info string; Slack ignores languages).
+  let out = text.replace(
+    /(^|\n)([ \t]*)(`{3,}|~{3,})[^\n]*\n([\s\S]*?)\n[ \t]*\3[ \t]*(?=\n|$)/g,
+    (_m, pre, _indent, _fence, body) => {
+      const idx = codeStore.push('```\n' + body + '\n```') - 1;
+      return pre + MARK + 'C' + idx + MARK;
+    }
+  );
+
+  // 2. Protect inline code spans.
+  out = out.replace(/`[^`\n]+`/g, (m) => {
+    const idx = codeStore.push(m) - 1;
+    return MARK + 'I' + idx + MARK;
+  });
+
+  // 3. Transform the remaining (non-code) text.
+  out = out
+    // ATX headings -> bold line (mrkdwn has no headers)
+    .replace(/^[ \t]{0,3}#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$/gm, '*$1*')
+    // thematic breaks
+    .replace(/^[ \t]{0,3}(?:-{3,}|\*{3,}|_{3,})[ \t]*$/gm, '────────')
+    // images -> alt text (Slack mrkdwn cannot inline images)
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, (_m, alt) => alt || '')
+    // links [text](url) -> <url|text>
+    .replace(/\[([^\]]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g, '<$2|$1>')
+    // bold ** / __ -> *
+    .replace(/\*\*([^\n]+?)\*\*/g, '*$1*')
+    .replace(/__([^\n]+?)__/g, '*$1*')
+    // strikethrough ~~ -> ~
+    .replace(/~~([^\n]+?)~~/g, '~$1~')
+    // bullet markers -> •
+    .replace(/^([ \t]*)[-*+][ \t]+/gm, '$1• ');
+
+  // 4. Restore protected code.
+  out = out.replace(new RegExp(MARK + 'C(\\d+)' + MARK, 'g'), (_m, i) => codeStore[Number(i)]);
+  out = out.replace(new RegExp(MARK + 'I(\\d+)' + MARK, 'g'), (_m, i) => codeStore[Number(i)]);
+  return out;
+}
+
+/**
+ * Modal preview blocks: CommonMark converted to Slack `mrkdwn`, chunked into
+ * `section` blocks under the per-block cap. This is the only preview path for modals
+ * (the `markdown` block is unsupported there — it errors with invalid_arguments).
  * @param {string} raw
  * @returns {{ type: 'section', text: { type: 'mrkdwn', text: string } }[]}
  */
 export function toMrkdwnSections(raw) {
-  const text = typeof raw === 'string' ? raw : String(raw ?? '');
-  const chunks = splitOnBlockBoundaries(text || ' ', MRKDWN_CHUNK);
+  const converted = mrkdwnFromCommonMark(raw);
+  const chunks = splitOnBlockBoundaries(converted || ' ', MRKDWN_CHUNK);
   return chunks.map((chunk) => ({
     type: 'section',
     text: { type: 'mrkdwn', text: chunk.length ? chunk : ' ' }
