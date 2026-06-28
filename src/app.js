@@ -1,9 +1,10 @@
 /**
  * @file Bolt app wiring (§4). HTTP receiver on POST /slack/events. Entry points:
  *   1. message shortcut "Render Markdown" (PRIMARY) — render a shared .md file
- *   2. /render slash command — paste raw Markdown
- *   3. file_shared handling (opt-in, per-channel allowlist): FILE_SHARED_MODE =
- *      'auto' (auto-render a threaded reply) | 'button' (post a Render button) | 'off'
+ *   2. /render slash command — paste raw Markdown (modal is just the text input)
+ *   3. file_shared handling (opt-in): FILE_SHARED_MODE = off | auto | button
+ * All renders are delivered as MESSAGES (ephemeral for 1–2, threaded reply for auto),
+ * which support the native `markdown` block — full fidelity, tables included.
  * Plus the "Download as HTML" button action.
  */
 
@@ -14,16 +15,22 @@ import {
   downloadFileText,
   isMarkdownFile,
   shareThreadTs,
-  postCompanionButton
+  postCompanionButton,
+  postViaResponseUrl
 } from './deliver.js';
-import { handlePreview, handleDownload, handleAutoRender } from './slack/fileEntry.js';
+import {
+  renderForMessage,
+  handleAutoRender,
+  handleDownload,
+  DOWNLOAD_ACTION_ID
+} from './slack/fileEntry.js';
 import { buildInputModal, parseSubmission, RENDER_CALLBACK_ID } from './slack/inputModal.js';
-import { buildLoadingView, buildConfirmationView, DOWNLOAD_ACTION_ID } from './slack/previewView.js';
 
 const { App } = bolt;
 
 const MESSAGE_SHORTCUT_ID = 'render_md_msg';
 const COMPANION_ACTION_ID = 'companion_render';
+const RENDERING_TEXT = ':hourglass_flowing_sand: Rendering…';
 
 function requireEnv(name) {
   const v = process.env[name];
@@ -54,115 +61,97 @@ function firstMarkdownFile(message) {
   });
 }
 
-async function updateView(client, viewId, view) {
-  return client.views.update({ view_id: viewId, view });
-}
+const errorPayload = (msg) => ({ response_type: 'ephemeral', replace_original: true, text: `⚠️ ${msg}` });
 
 // --- Entry point 1: message shortcut (PRIMARY) ---------------------------------
 app.shortcut(MESSAGE_SHORTCUT_ID, async ({ shortcut, ack, client, logger }) => {
   await ack();
-
-  // Open a loading modal within the 3s trigger_id window.
-  let viewId;
+  const responseUrl = shortcut.response_url;
   try {
-    const open = await client.views.open({
-      trigger_id: shortcut.trigger_id,
-      view: buildLoadingView()
-    });
-    viewId = open.view.id;
-  } catch (err) {
-    logger.error('Failed to open loading modal:', err);
-    return;
-  }
+    await postViaResponseUrl(responseUrl, { response_type: 'ephemeral', text: RENDERING_TEXT });
 
-  try {
     const file = firstMarkdownFile(shortcut.message);
     if (!file) {
-      await updateView(client, viewId, buildConfirmationView({
-        message: '⚠️ No Markdown (`.md`) file found on this message.'
-      }));
+      await postViaResponseUrl(responseUrl, errorPayload('No Markdown (`.md`) file found on this message.'));
       return;
     }
     const { text, filename } = await fetchFileText(client, { fileId: file.id, botToken: BOT_TOKEN });
-    await handlePreview({ rawText: text, filename, client, viewId, logger });
+    const { blocks, text: fallback } = renderForMessage({ rawText: text, filename });
+    await postViaResponseUrl(responseUrl, {
+      response_type: 'ephemeral',
+      replace_original: true,
+      blocks,
+      text: fallback
+    });
   } catch (err) {
-    logger.error('Shortcut preview failed:', err);
-    await updateView(client, viewId, buildConfirmationView({
-      message: `⚠️ Could not render that file: ${err.message}`
-    })).catch(() => {});
+    logger.error('Shortcut render failed:', err);
+    await postViaResponseUrl(responseUrl, errorPayload(`Could not render that file: ${err.message}`)).catch(() => {});
   }
 });
 
-// --- Entry point 2: /render paste path -----------------------------------------
+// --- Entry point 2: /render paste path ------------------------------------------
 app.command('/render', async ({ ack, body, client, logger }) => {
   await ack();
   try {
-    await client.views.open({ trigger_id: body.trigger_id, view: buildInputModal() });
+    const view = buildInputModal();
+    // Stash the command's response_url so the submit handler can post the result.
+    view.private_metadata = JSON.stringify({ responseUrl: body.response_url });
+    await client.views.open({ trigger_id: body.trigger_id, view });
   } catch (err) {
     logger.error('Failed to open /render modal:', err);
   }
 });
 
-app.view(RENDER_CALLBACK_ID, async ({ ack, body, view, client, logger }) => {
+app.view(RENDER_CALLBACK_ID, async ({ ack, view, logger }) => {
+  await ack(); // close the modal
   const { source, instructionFile } = parseSubmission(view);
-
-  // Swap the input modal to a loading view, then render in place.
-  await ack({ response_action: 'update', view: buildLoadingView() });
+  let responseUrl;
+  try {
+    responseUrl = JSON.parse(view.private_metadata || '{}').responseUrl;
+  } catch {
+    responseUrl = undefined;
+  }
+  if (!responseUrl) return;
 
   try {
-    await handlePreview({
-      rawText: source,
-      filename: '',
-      forceInstruction: instructionFile,
-      client,
-      viewId: body.view.id,
-      logger
-    });
+    const { blocks, text } = renderForMessage({ rawText: source, forceInstruction: instructionFile });
+    await postViaResponseUrl(responseUrl, { response_type: 'ephemeral', blocks, text });
   } catch (err) {
-    logger.error('Paste preview failed:', err);
-    await updateView(client, body.view.id, buildConfirmationView({
-      message: `⚠️ Could not render: ${err.message}`
-    })).catch(() => {});
+    logger.error('Paste render failed:', err);
+    await postViaResponseUrl(responseUrl, errorPayload(`Could not render: ${err.message}`)).catch(() => {});
   }
 });
 
-// --- Download as HTML action ---------------------------------------------------
+// --- Download as HTML action ----------------------------------------------------
 app.action(DOWNLOAD_ACTION_ID, async ({ ack, body, action, client, logger }) => {
   await ack();
   try {
     await handleDownload({
       token: action.value,
       userId: body.user.id,
-      viewId: body.view.id,
+      responseUrl: body.response_url,
       client
     });
   } catch (err) {
     logger.error('HTML download failed:', err);
-    await updateView(client, body.view.id, buildConfirmationView({
-      message: `⚠️ Could not send the HTML: ${err.message}`
-    })).catch(() => {});
+    if (body.response_url) {
+      await postViaResponseUrl(body.response_url, errorPayload(`Could not send the HTML: ${err.message}`)).catch(() => {});
+    }
   }
 });
 
-// --- Companion button action (used only when FILE_SHARED_MODE='button') ---------
+// --- Companion button action (used only when FILE_SHARED_MODE='button') ----------
 app.action(COMPANION_ACTION_ID, async ({ ack, body, action, client, logger }) => {
   await ack();
-  let viewId;
+  const responseUrl = body.response_url;
   try {
-    const open = await client.views.open({
-      trigger_id: body.trigger_id,
-      view: buildLoadingView()
-    });
-    viewId = open.view.id;
+    await postViaResponseUrl(responseUrl, { response_type: 'ephemeral', text: RENDERING_TEXT });
     const { text, filename } = await fetchFileText(client, { fileId: action.value, botToken: BOT_TOKEN });
-    await handlePreview({ rawText: text, filename, client, viewId, logger });
+    const { blocks, text: fallback } = renderForMessage({ rawText: text, filename });
+    await postViaResponseUrl(responseUrl, { response_type: 'ephemeral', replace_original: true, blocks, text: fallback });
   } catch (err) {
     logger.error('Companion render failed:', err);
-    if (viewId) {
-      await updateView(client, viewId, buildConfirmationView({
-        message: `⚠️ Could not render that file: ${err.message}`
-      })).catch(() => {});
-    }
+    await postViaResponseUrl(responseUrl, errorPayload(`Could not render that file: ${err.message}`)).catch(() => {});
   }
 });
 
@@ -180,7 +169,7 @@ app.event('file_shared', async ({ event, client, logger }) => {
     if (FILE_SHARED_MODE === 'auto') {
       const text = await downloadFileText(file, BOT_TOKEN);
       const threadTs = shareThreadTs(file, channel);
-      await handleAutoRender({ rawText: text, filename: file.name, client, channel, threadTs, logger });
+      await handleAutoRender({ rawText: text, filename: file.name, client, channel, threadTs });
     } else if (FILE_SHARED_MODE === 'button') {
       await postCompanionButton(client, {
         channel,
@@ -203,4 +192,5 @@ app.error(async (error) => {
   const port = process.env.PORT || 3000;
   await app.start(port);
   console.log(`⚡️ slack-md-renderer running on :${port} (POST /slack/events)`);
+  console.log(`file_shared mode: ${FILE_SHARED_MODE}; channels: ${FILE_RENDER_CHANNELS.size}`);
 })();

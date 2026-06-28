@@ -24,16 +24,20 @@ entry point ─┐
  1. message shortcut "Render Markdown"  (PRIMARY)
  2. /render slash command (paste path)            ┌─> classify ─> audit ─> render
  3. file_shared: auto-render or button (opt-in) ──┘        │
-                                                            ├─ blocked → warning (findings)
-                                                            └─ safe    → preview / threaded reply
+                                                            ├─ blocked → findings (ephemeral)
+                                                            └─ safe    → rendered Markdown
+                                                                          (ephemeral, or threaded
+                                                                           for auto-render)
                                                                           (+ "Download as HTML"
                                                                            for document files)
 ```
 
-Entry points 1–2 open a **modal** preview (Slack `mrkdwn`, no tables). Entry point 3
-(`file_shared`, opt-in) has no `trigger_id`, so it delivers as a **message** — which
-supports the native `markdown` block, so the auto-render path renders **full fidelity
-including tables**.
+**All renders are delivered as messages**, not modals — so they use Slack's native
+`markdown` block and render **full fidelity, tables included**. The shortcut and `/render`
+post an **ephemeral** message (only the requester sees it; no channel clutter); auto-render
+posts a **threaded reply**. The only modal in the app is the `/render` text-input form
+(modals can't render the `markdown` block — they fail with `invalid_arguments` — so they're
+not used for output).
 
 - **Classifier** (`src/classify.js`): instruction/skill file vs document. Instruction
   files (`SKILL.md`, `AGENTS.md`, `CLAUDE.md`, `*.mdc`, `.cursorrules`, front-matter
@@ -45,19 +49,9 @@ including tables**.
   severity→action mapping. Strict mode blocks on MEDIUM+; normal mode blocks on HIGH+
   and renders MEDIUM with a caution banner.
 - **Render** (`src/render.js`): `markdown-it` runs with `html:false` (raw HTML is
-  escaped, never emitted). Preview uses native Slack `markdown` blocks with an
-  automatic `section`+`mrkdwn` fallback. HTML export is sanitized with `sanitize-html`
+  escaped, never emitted). The message render uses native Slack `markdown` blocks,
+  chunked under the 12k limit. HTML export is sanitized with `sanitize-html`
   (allowlist; `https`/`mailto` schemes only; remote image `src` stripped by default).
-
-### Modal Markdown fidelity (confirmed)
-
-Slack's `markdown` block is **not supported inside modal views** — sending one makes
-`views.open`/`views.update` fail with `invalid_arguments`. Modals only accept `mrkdwn`
-text objects in `section` blocks. So the modal preview converts CommonMark to Slack
-`mrkdwn` (`mrkdwnFromCommonMark` in [src/render.js](src/render.js)): headings render as
-bold, `**bold**`→`*bold*`, links as `<url|text>`, bullets as `•`, and fenced/inline code
-is preserved verbatim. **Tables and sized headers don't render in `mrkdwn`** — use the
-**Download as HTML** button for full-fidelity output (documents only).
 
 ## Project layout
 
@@ -65,11 +59,11 @@ is preserved verbatim. **Tables and sized headers don't render in `mrkdwn`** —
 src/
   app.js                # Bolt wiring: shortcut, /render, actions, file_shared
   classify.js           # instruction vs document
-  render.js             # toSlackBlocks / toMrkdwnSections / toHtml
-  deliver.js            # fetchFileText, dmHtmlFile, postCompanionButton
+  render.js             # toSlackBlocks (markdown blocks) / toHtml
+  deliver.js            # fetchFileText, dmHtmlFile, postViaResponseUrl, postThreadedBlocks
   previewCache.js       # short-lived audited-source cache (download reuse)
   security/             # audit.js, normalize.js, ruleset.js
-  slack/                # inputModal, previewView, warningView, fileEntry
+  slack/                # inputModal (paste form), warningView, fileEntry (render core)
 config/
   ruleset.json          # detection patterns (versioned)
   classify.json         # filename/front-matter classifier patterns

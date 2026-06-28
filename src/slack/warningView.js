@@ -3,8 +3,6 @@
  * No "render anyway" bypass is ever offered for critical/high findings.
  */
 
-import { BLOCK_IDS } from './inputModal.js';
-
 const SEVERITY_ICON = {
   critical: '⛔',
   high: '🔴',
@@ -19,40 +17,8 @@ const CLOSING_NOTE =
   'shows what was hiding.';
 
 /**
- * Full modal view for the shortcut/button flow — `views.update` the loading modal
- * to this (§7 primary).
- * @param {object} audit
- * @returns {object} a Slack `modal` view payload
- */
-export function buildWarningView(audit) {
-  return {
-    type: 'modal',
-    callback_id: 'render_blocked',
-    title: { type: 'plain_text', text: 'Rendering blocked' },
-    close: { type: 'plain_text', text: 'Done' },
-    blocks: buildWarningBlocks(audit)
-  };
-}
-
-/**
- * view_submission response that surfaces a short inline error on the input block
- * (paste flow, §7).
- * @param {object} audit
- * @returns {object} a Slack response_action:'errors' payload
- */
-export function buildBlockedResponse(audit) {
-  const n = audit.findings.length;
-  return {
-    response_action: 'errors',
-    errors: {
-      [BLOCK_IDS.source]: `Rendering blocked — ${n} security finding${n === 1 ? '' : 's'} (${audit.severity}).`
-    }
-  };
-}
-
-/**
- * Block Kit blocks listing findings for a blocked render (§7). Reused by the modal
- * warning view and by an optional DM.
+ * Block Kit blocks listing findings for a blocked render (§7). Shown in the ephemeral
+ * message render (private to the requester, so listing snippets is fine).
  * @param {object} audit
  * @returns {object[]}
  */

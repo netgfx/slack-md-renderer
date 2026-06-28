@@ -78,6 +78,23 @@ export function shareThreadTs(file, channel) {
 }
 
 /**
+ * Post a message to a Slack `response_url` (from a slash command / shortcut / message
+ * action). Works without channel membership and supports the native `markdown` block.
+ * @param {string} responseUrl
+ * @param {object} payload a Slack message payload (blocks, text, response_type, replace_original)
+ * @returns {Promise<Response>}
+ */
+export async function postViaResponseUrl(responseUrl, payload) {
+  const resp = await fetch(responseUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  if (!resp.ok) throw new Error(`response_url post failed: HTTP ${resp.status}`);
+  return resp;
+}
+
+/**
  * Post Block Kit blocks, optionally as a threaded reply.
  * @param {import('@slack/web-api').WebClient} client
  * @param {{ channel: string, threadTs?: string, blocks: object[], text?: string }} args
