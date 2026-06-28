@@ -23,12 +23,17 @@ See [docs/slack-markdown-renderer-plan.md](docs/slack-markdown-renderer-plan.md)
 entry point ─┐
  1. message shortcut "Render Markdown"  (PRIMARY)
  2. /render slash command (paste path)            ┌─> classify ─> audit ─> render
- 3. companion "Render" button (opt-in)  ──────────┘        │
-                                                            ├─ blocked → warning view (findings)
-                                                            └─ safe    → modal Markdown preview
+ 3. file_shared: auto-render or button (opt-in) ──┘        │
+                                                            ├─ blocked → warning (findings)
+                                                            └─ safe    → preview / threaded reply
                                                                           (+ "Download as HTML"
                                                                            for document files)
 ```
+
+Entry points 1–2 open a **modal** preview (Slack `mrkdwn`, no tables). Entry point 3
+(`file_shared`, opt-in) has no `trigger_id`, so it delivers as a **message** — which
+supports the native `markdown` block, so the auto-render path renders **full fidelity
+including tables**.
 
 - **Classifier** (`src/classify.js`): instruction/skill file vs document. Instruction
   files (`SKILL.md`, `AGENTS.md`, `CLAUDE.md`, `*.mdc`, `.cursorrules`, front-matter
@@ -94,8 +99,11 @@ and use the tunnel URL as the Request URL.
 4. **Interactivity & Shortcuts**: toggle ON, set the same Request URL. Then
    **Shortcuts → Create New Shortcut → On messages**: name "Render Markdown",
    callback id **`render_md_msg`**.
-5. *(Optional, companion button)* **Event Subscriptions**: enable, same Request URL,
-   subscribe to the bot event `file_shared`, and set `COMPANION_CHANNELS`.
+5. *(Optional, auto-render / companion button)* **Event Subscriptions**: enable, same
+   Request URL, subscribe to the **bot event** `file_shared`. Then set
+   `FILE_SHARED_MODE` (`auto` or `button`) and `FILE_RENDER_CHANNELS` to the channel
+   IDs, and invite the app to those channels. `auto` posts the rendered Markdown as a
+   threaded reply (full fidelity, tables included) whenever a `.md` is shared.
 6. **Basic Information**: copy the **Signing Secret** → `SLACK_SIGNING_SECRET`.
    **Install to Workspace**, copy the **Bot User OAuth Token** (`xoxb-…`) →
    `SLACK_BOT_TOKEN`.
@@ -106,7 +114,8 @@ and use the tunnel URL as the Request URL.
 
 - Web Service (Node). Build `npm ci`, Start `npm start`. Bind to `process.env.PORT`.
 - Env vars: `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, `ALLOW_REMOTE_IMAGES` (default
-  `false`), `COMPANION_CHANNELS` (optional), `NODE_VERSION=22`. See [render.yaml](render.yaml).
+  `false`), `FILE_SHARED_MODE` + `FILE_RENDER_CHANNELS` (optional), `NODE_VERSION=22`.
+  See [render.yaml](render.yaml).
 - **Cold-start caveat:** Slack requires the Request URL to ack within **3 seconds**.
   Render free instances spin down and cold starts can exceed that. Use at least the
   cheapest **always-on** (`starter`) plan, or add an external uptime ping.
@@ -116,7 +125,8 @@ and use the tunnel URL as the Request URL.
 | Env | Default | Effect |
 |---|---|---|
 | `ALLOW_REMOTE_IMAGES` | `false` | `false` strips remote `<img src>` in HTML export (anti-exfil) |
-| `COMPANION_CHANNELS` | empty | channels where the opt-in `file_shared` companion button posts |
+| `FILE_SHARED_MODE` | `off` | `auto` = auto-render a threaded reply on share; `button` = post a Render button |
+| `FILE_RENDER_CHANNELS` | empty | channel IDs where `file_shared` handling is active (empty = off) |
 
 Hard limits: input is rejected over **50,000 chars**; shared files over **256 KB** are
 refused. Audit rules live in `config/ruleset.json` and are unit-tested against attack

@@ -89,6 +89,40 @@ export function buildWarningBlocks(audit) {
 }
 
 /**
+ * Concise public blocked notice for auto-render (threaded reply). Deliberately does
+ * NOT dump finding snippets — broadcasting the annotated payload into a channel would
+ * itself be undesirable. Points to the shortcut for full details.
+ * @param {object} audit
+ * @param {string} [filename]
+ * @returns {object[]} Block Kit blocks
+ */
+export function buildBlockedNotice(audit, filename) {
+  const categories = [...new Set(audit.findings.map((f) => f.category))].join(', ');
+  return [
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text:
+          `🚫 *${filename || 'Markdown'}* was not rendered — the security audit found ` +
+          `*${audit.findings.length}* finding(s) (highest: *${audit.severity}*).`
+      }
+    },
+    {
+      type: 'context',
+      elements: [
+        {
+          type: 'mrkdwn',
+          text:
+            `Categories: ${categories}. Open the message’s \`⋯\` menu → *Render Markdown* ` +
+            'for details. No bypass is offered for high/critical findings.'
+        }
+      ]
+    }
+  ];
+}
+
+/**
  * Caution banner prepended to rendered output for MEDIUM findings in normal mode
  * (§6.4) — rendered, but flagged.
  * @param {object} audit

@@ -8,11 +8,14 @@
 
 import { classifyMarkdown } from '../classify.js';
 import { auditMarkdown } from '../security/audit.js';
-import { toMrkdwnSections, toHtml } from '../render.js';
-import { buildWarningView } from './warningView.js';
+import { toMrkdwnSections, toSlackBlocks, toHtml } from '../render.js';
+import { buildWarningView, buildBlockedNotice, buildCautionBanner } from './warningView.js';
 import { buildResultView, buildConfirmationView } from './previewView.js';
-import { dmHtmlFile } from '../deliver.js';
+import { dmHtmlFile, postThreadedBlocks } from '../deliver.js';
 import * as cache from '../previewCache.js';
+
+/** Max threaded reply messages per render (each carries one <12k markdown block). */
+const MAX_AUTO_MESSAGES = 5;
 
 /**
  * Classify + audit + render into an already-open modal (viewId).
@@ -55,6 +58,67 @@ export async function handlePreview({ rawText, filename = '', forceInstruction =
   } catch (err) {
     if (logger) logger.error('views.update failed:', err);
     throw err;
+  }
+
+  return { classify: classification, audit };
+}
+
+/**
+ * Auto-render path (file_shared event, no trigger_id ⇒ no modal). Classifies and
+ * audits the file, then posts the result as a threaded reply. Messages support the
+ * `markdown` block, so this renders full fidelity (including tables). Blocked files
+ * get a concise public notice (no payload broadcast).
+ * @param {object} args
+ * @param {string} args.rawText
+ * @param {string} [args.filename]
+ * @param {import('@slack/web-api').WebClient} args.client
+ * @param {string} args.channel
+ * @param {string} [args.threadTs] message ts to reply under
+ * @param {{ error: Function }} [args.logger]
+ * @returns {Promise<{ classify: object, audit: object }>}
+ */
+export async function handleAutoRender({ rawText, filename = '', client, channel, threadTs }) {
+  const classification = classifyMarkdown({ filename, raw: rawText });
+  const audit = auditMarkdown(rawText, { strict: classification.strict });
+
+  if (!audit.safe) {
+    await postThreadedBlocks(client, {
+      channel,
+      threadTs,
+      blocks: buildBlockedNotice(audit, filename),
+      text: 'Markdown not rendered (security audit)'
+    });
+    return { classify: classification, audit };
+  }
+
+  const chunks = toSlackBlocks(rawText); // markdown blocks (tables OK in messages)
+  const shown = chunks.slice(0, MAX_AUTO_MESSAGES);
+
+  for (let i = 0; i < shown.length; i++) {
+    const blocks = [];
+    if (i === 0) {
+      blocks.push({
+        type: 'context',
+        elements: [{ type: 'mrkdwn', text: `:memo: Rendered *${filename || 'Markdown'}*` }]
+      });
+      if (audit.caution) blocks.push(buildCautionBanner(audit));
+    }
+    blocks.push(shown[i]); // a single <12k markdown block (respects the per-message cap)
+    if (i === shown.length - 1) {
+      if (chunks.length > MAX_AUTO_MESSAGES) {
+        blocks.push({
+          type: 'context',
+          elements: [{ type: 'mrkdwn', text: '…preview truncated. Use the `⋯` → *Render Markdown* shortcut for the rest.' }]
+        });
+      }
+      if (classification.allowHtmlExport) {
+        blocks.push({
+          type: 'context',
+          elements: [{ type: 'mrkdwn', text: '💡 Want an HTML file? Use the message’s `⋯` menu → *Render Markdown* → Download as HTML.' }]
+        });
+      }
+    }
+    await postThreadedBlocks(client, { channel, threadTs, blocks, text: 'Rendered Markdown' });
   }
 
   return { classify: classification, audit };

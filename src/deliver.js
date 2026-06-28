@@ -9,22 +9,25 @@ export const MAX_FILE_BYTES = 256 * 1024;
 const MD_EXTENSIONS = ['.md', '.markdown'];
 
 /**
- * Fetch the text content of a shared Markdown file: files.info, then an
- * authenticated download of url_private. Enforces extension + size caps (§4b.2).
- * @param {import('@slack/web-api').WebClient} client
- * @param {{ fileId: string, botToken: string }} args
- * @returns {Promise<{ text: string, filename: string }>}
+ * Is this Slack file object a Markdown file?
+ * @param {object} file
+ * @returns {boolean}
  */
-export async function fetchFileText(client, { fileId, botToken }) {
-  const info = await client.files.info({ file: fileId });
-  const file = info.file;
+export function isMarkdownFile(file) {
+  const name = String(file?.name || '').toLowerCase();
+  return MD_EXTENSIONS.some((e) => name.endsWith(e)) || file?.filetype === 'markdown';
+}
+
+/**
+ * Authenticated download of a (already fetched) file's text, with extension + size
+ * caps (§4b.2).
+ * @param {object} file a Slack file object (from files.info)
+ * @param {string} botToken
+ * @returns {Promise<string>}
+ */
+export async function downloadFileText(file, botToken) {
   if (!file) throw new Error('file not found');
-
-  const name = String(file.name || '');
-  const lower = name.toLowerCase();
-  const okExt = MD_EXTENSIONS.some((e) => lower.endsWith(e)) || file.filetype === 'markdown';
-  if (!okExt) throw new Error(`unsupported file type: ${file.filetype || name}`);
-
+  if (!isMarkdownFile(file)) throw new Error(`unsupported file type: ${file.filetype || file.name}`);
   if (typeof file.size === 'number' && file.size > MAX_FILE_BYTES) {
     throw new Error(`file too large: ${file.size} bytes (cap ${MAX_FILE_BYTES})`);
   }
@@ -39,7 +42,54 @@ export async function fetchFileText(client, { fileId, botToken }) {
   if (buf.byteLength > MAX_FILE_BYTES) {
     throw new Error(`file too large: ${buf.byteLength} bytes (cap ${MAX_FILE_BYTES})`);
   }
-  return { text: buf.toString('utf8'), filename: name };
+  return buf.toString('utf8');
+}
+
+/**
+ * Fetch the text content of a shared Markdown file: files.info, then download.
+ * @param {import('@slack/web-api').WebClient} client
+ * @param {{ fileId: string, botToken: string }} args
+ * @returns {Promise<{ text: string, filename: string, file: object }>}
+ */
+export async function fetchFileText(client, { fileId, botToken }) {
+  const info = await client.files.info({ file: fileId });
+  const file = info.file;
+  const text = await downloadFileText(file, botToken);
+  return { text, filename: String(file.name || ''), file };
+}
+
+/**
+ * Find the timestamp of the message that shared a file into a channel, so a reply
+ * can be threaded under it. Returns undefined if not found.
+ * @param {object} file a Slack file object (from files.info, includes `shares`)
+ * @param {string} channel
+ * @returns {string|undefined}
+ */
+export function shareThreadTs(file, channel) {
+  const shares = file?.shares || {};
+  let best;
+  for (const group of [shares.public, shares.private]) {
+    const arr = (group && group[channel]) || [];
+    for (const s of arr) {
+      if (s?.ts && (!best || Number(s.ts) > Number(best))) best = s.ts;
+    }
+  }
+  return best;
+}
+
+/**
+ * Post Block Kit blocks, optionally as a threaded reply.
+ * @param {import('@slack/web-api').WebClient} client
+ * @param {{ channel: string, threadTs?: string, blocks: object[], text?: string }} args
+ * @returns {Promise<object>}
+ */
+export function postThreadedBlocks(client, { channel, threadTs, blocks, text }) {
+  return client.chat.postMessage({
+    channel,
+    ...(threadTs ? { thread_ts: threadTs } : {}),
+    blocks,
+    text: text ?? 'Rendered Markdown'
+  });
 }
 
 /**

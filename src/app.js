@@ -1,16 +1,22 @@
 /**
- * @file Bolt app wiring (§4). HTTP receiver on POST /slack/events. Three entry
- * points share one core (handlePreview):
+ * @file Bolt app wiring (§4). HTTP receiver on POST /slack/events. Entry points:
  *   1. message shortcut "Render Markdown" (PRIMARY) — render a shared .md file
  *   2. /render slash command — paste raw Markdown
- *   3. companion "Render" button on file_shared (opt-in, per-channel allowlist)
+ *   3. file_shared handling (opt-in, per-channel allowlist): FILE_SHARED_MODE =
+ *      'auto' (auto-render a threaded reply) | 'button' (post a Render button) | 'off'
  * Plus the "Download as HTML" button action.
  */
 
 import bolt from '@slack/bolt';
 
-import { fetchFileText, postCompanionButton } from './deliver.js';
-import { handlePreview, handleDownload } from './slack/fileEntry.js';
+import {
+  fetchFileText,
+  downloadFileText,
+  isMarkdownFile,
+  shareThreadTs,
+  postCompanionButton
+} from './deliver.js';
+import { handlePreview, handleDownload, handleAutoRender } from './slack/fileEntry.js';
 import { buildInputModal, parseSubmission, RENDER_CALLBACK_ID } from './slack/inputModal.js';
 import { buildLoadingView, buildConfirmationView, DOWNLOAD_ACTION_ID } from './slack/previewView.js';
 
@@ -31,9 +37,10 @@ function requireEnv(name) {
 const BOT_TOKEN = requireEnv('SLACK_BOT_TOKEN');
 const SIGNING_SECRET = requireEnv('SLACK_SIGNING_SECRET');
 
-// Opt-in companion-button channels (comma-separated channel ids). Empty => off.
-const COMPANION_CHANNELS = new Set(
-  (process.env.COMPANION_CHANNELS || '').split(',').map((s) => s.trim()).filter(Boolean)
+// file_shared handling: mode + the channels it's active in. Empty list => off.
+const FILE_SHARED_MODE = (process.env.FILE_SHARED_MODE || 'off').toLowerCase(); // off | auto | button
+const FILE_RENDER_CHANNELS = new Set(
+  (process.env.FILE_RENDER_CHANNELS || '').split(',').map((s) => s.trim()).filter(Boolean)
 );
 
 const app = new App({ token: BOT_TOKEN, signingSecret: SIGNING_SECRET });
@@ -137,7 +144,7 @@ app.action(DOWNLOAD_ACTION_ID, async ({ ack, body, action, client, logger }) => 
   }
 });
 
-// --- Entry point 3: companion button (opt-in) ----------------------------------
+// --- Companion button action (used only when FILE_SHARED_MODE='button') ---------
 app.action(COMPANION_ACTION_ID, async ({ ack, body, action, client, logger }) => {
   await ack();
   let viewId;
@@ -159,21 +166,29 @@ app.action(COMPANION_ACTION_ID, async ({ ack, body, action, client, logger }) =>
   }
 });
 
+// --- Entry point 3: file_shared (auto-render threaded reply, or companion button) -
 app.event('file_shared', async ({ event, client, logger }) => {
   try {
+    if (FILE_SHARED_MODE === 'off') return;
     const channel = event.channel_id;
-    if (!COMPANION_CHANNELS.has(channel)) return; // off unless allowlisted
+    if (!FILE_RENDER_CHANNELS.has(channel)) return; // off unless allowlisted
+
     const info = await client.files.info({ file: event.file_id });
-    const name = String(info.file?.name || '').toLowerCase();
-    if (!(name.endsWith('.md') || name.endsWith('.markdown') || info.file?.filetype === 'markdown')) {
-      return;
+    const file = info.file;
+    if (!isMarkdownFile(file)) return; // ignore non-.md (incl. our own HTML uploads)
+
+    if (FILE_SHARED_MODE === 'auto') {
+      const text = await downloadFileText(file, BOT_TOKEN);
+      const threadTs = shareThreadTs(file, channel);
+      await handleAutoRender({ rawText: text, filename: file.name, client, channel, threadTs, logger });
+    } else if (FILE_SHARED_MODE === 'button') {
+      await postCompanionButton(client, {
+        channel,
+        fileId: event.file_id,
+        filename: file.name,
+        actionId: COMPANION_ACTION_ID
+      });
     }
-    await postCompanionButton(client, {
-      channel,
-      fileId: event.file_id,
-      filename: info.file?.name,
-      actionId: COMPANION_ACTION_ID
-    });
   } catch (err) {
     logger.error('file_shared handling failed:', err);
   }

@@ -12,7 +12,9 @@ services:
         sync: false
       - key: ALLOW_REMOTE_IMAGES
         value: "false"
-      - key: COMPANION_CHANNELS
+      - key: FILE_SHARED_MODE
+        value: "off"
+      - key: FILE_RENDER_CHANNELS
         value: ""
       - key: NODE_VERSION
         value: "22"
